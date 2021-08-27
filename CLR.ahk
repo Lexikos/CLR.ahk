@@ -4,218 +4,148 @@
 ; ==========================================================
 ;
 ;   Author:     Lexikos
-;   Version:    1.1
-;   Requires:
-;       - AutoHotkey_L
-;       - COM Standard Library
-;         http://www.autohotkey.com/forum/topic22923.html
+;   Version:    1.2
+;   Requires:	AutoHotkey_L v1.0.96+
 ;
 
-CLR_LoadLibrary(sLibrary, pAppDomain=0)
+CLR_LoadLibrary(AssemblyName, AppDomain=0)
 {
-    if !(pApp := pAppDomain ? pAppDomain : CLR_GetDefaultDomain())
-        return 0
-    if p_App := COM_QueryInterface(pApp,"{05F696DC-2B29-3663-AD8B-C4389CF2A713}")
-    {
-        psLib := COM_SysAllocString(sLibrary)
-
-        ; Attempt to load by full name (incl. Version, Culture & PublicKeyToken) first.
-        hr:=DllCall(NumGet(NumGet(p_App+0)+176),"uint",p_App,"uint",psLib,"uint*",pAsm:=0)
-
-        if (hr!=0 or !pAsm)
-        {
-            ; Get typeof(Assembly) for calling static methods. (p_App->GetType()->Assembly->GetType())
-            DllCall(NumGet(NumGet(p_App+0)+40),"uint",p_App,"uint*",p_Type:=0)
-            ,DllCall(NumGet(NumGet(p_Type+0)+80),"uint",p_Type,"uint*",p_Asm:=0)
-            , COM_Release(p_Type)
-            ,DllCall(NumGet(NumGet(p_Asm+0)+40),"uint",p_Asm,"uint*",p_Type)
-            , COM_Release(p_Asm)
-
-            ; Initialize VARIANTs & SAFEARRAY(VARIANT) for method args.
-            ,VarSetCapacity(vArg,16,0), NumPut(8,vArg), NumPut(psLib,vArg,8)
-            ,VarSetCapacity(vRet,16,0)
-            ,VarSetCapacity(rArgs,24,0), NumPut(1,NumPut(&vArg,NumPut(16,NumPut(1,rArgs))+4))
-
-            ; Attempt to load from file.  Does not use IfExist since LoadFrom probably doesn't use A_WorkingDir (exclusively or at all).
-            ,hr:=DllCall(NumGet(NumGet(p_Type+0)+228),"uint",p_Type
-                ,"uint",pws:=COM_SysAllocString("LoadFrom"),"int",0x158
-                ,"uint",0,"int64",1,"int64",0,"uint",&rArgs,"uint",&vRet,"uint")
-            ,COM_SysFreeString(pws)
-
-            if (hr!=0 or !NumGet(vRet,8))  ; Attempt to load using partial name.
-            {
-                hr:=DllCall(NumGet(NumGet(p_Type+0)+228),"uint",p_Type
-                    ,"uint",pws:=COM_SysAllocString("LoadWithPartialName")
-                    ,"int",0x158,"uint",0,"int64",1,"int64",0,"uint",&rArgs,"uint",&vRet,"uint")
-                ,COM_SysFreeString(pws)
-            }
-            
-            ; If successful, vRet should be of type VT_DISPATCH.
-            pAsm := hr ? 0 : NumGet(vRet,8)
-            
-            COM_Release(p_Type)
-        }
-        COM_SysFreeString(psLib)
-        COM_Release(p_App)
-    }
-    if (pAppDomain != pApp)
-        COM_Release(pApp)
-    return pAsm ? COM_Enwrap(pAsm) : ""
-}
-
-CLR_CreateObject(Assembly, TypeName, prm0="vT_NoNe", prm1="vT_NoNe", prm2="vT_NoNe", prm3="vT_NoNe", prm4="vT_NoNe", prm5="vT_NoNe", prm6="vT_NoNe", prm7="vT_NoNe", prm8="vT_NoNe", prm9="vT_NoNe")
-{
-    if (prm0=="vT_NoNe")
-        return COM_Invoke(Assembly, "CreateInstance", TypeName)
-    
-    ; Code based heavily on COM_L.ahk by Sean:
-    VarSetCapacity(varg,160), nParams:=10
-    static sParams:="0123456789"
-	Loop, Parse, sParams
-	if (prm%A_LoopField%=="vT_NoNe")
-	{
-	 	nParams:=A_Index-1
-		Break
+	if !AppDomain
+		AppDomain := CLR_GetDefaultDomain()
+	e := ComObjError(0)
+	Loop 1 {
+		if assembly := AppDomain.Load_2(AssemblyName)
+			break
+		static null := ComObject(13,0)
+		args := ComObjArray(0xC, 1),  args[0] := AssemblyName
+		typeofAssembly := AppDomain.GetType().Assembly.GetType()
+		if assembly := typeofAssembly.InvokeMember_3("LoadWithPartialName", 0x158, null, null, args)
+			break
+		if assembly := typeofAssembly.InvokeMember_3("LoadFrom", 0x158, null, null, args)
+			break
 	}
-	Else If	prm%A_LoopField% is integer
-		NumPut(SubStr(prm%A_LoopField%,1,1)="+" ? 9 : prm%A_LoopField%=="-0" ? (prm%A_LoopField%:=0x80020004)*0+10 : 3, NumPut(prm%A_LoopField%,varg,168-16*A_Index,"int64"), -16)
-	Else If	IsObject(prm%A_LoopField%)
-		typ:=prm%A_LoopField%["typ_"], prm:=prm%A_LoopField%["prm_"]
-        , NumPut(typ==8 ? CLR_BSTR(prm%A_LoopField%,prm) : prm, NumPut(typ,varg,160-16*A_Index), 4, "int64")
-	Else NumPut(CLR_BSTR(prm%A_LoopField%,prm%A_LoopField%), NumPut(8,varg,160-16*A_Index), 4)
-    
-    VarSetCapacity(aArgs,24,0), NumPut(&varg+160-16*nParams,NumPut(16,NumPut(1,aArgs,0,"Ushort")+2)+4), NumPut(nParams,aArgs,16)
-    static ArrayEmpty:=0, saE
-    ArrayEmpty ? "" : VarSetCapacity(saE,24,0), NumPut(16,NumPut(0x120001,saE)), ArrayEmpty := COM_Parameter(0x200C,&saE)
-    return COM_Invoke(Assembly, "CreateInstance_3", TypeName, 0, 0, "+0", COM_Parameter(0x200C,&aArgs), "+0", ArrayEmpty)
+	ComObjError(e)
+	return assembly
 }
 
-CLR_CompileC#(Code, References, pAppDomain=0, FileName="", CompilerOptions="")
+CLR_CreateObject(Assembly, TypeName, Args*)
 {
-    return CLR_CompileAssembly(Code, References, "System", "Microsoft.CSharp.CSharpCodeProvider", pAppDomain, FileName, CompilerOptions)
+	if !(argCount := Args.MaxIndex())
+		return Assembly.CreateInstance_2(TypeName, true)
+	
+	vargs := ComObjArray(0xC, argCount)
+	Loop % argCount
+		vargs[A_Index-1] := Args[A_Index]
+	
+	static Array_Empty := ComObjArray(0xC,0), null := ComObject(13,0)
+	
+	return Assembly.CreateInstance_3(TypeName, true, 0, null, vargs, null, Array_Empty)
 }
 
-CLR_CompileVB(Code, References, pAppDomain=0, FileName="", CompilerOptions="")
+CLR_CompileC#(Code, References="", AppDomain=0, FileName="", CompilerOptions="")
 {
-    return CLR_CompileAssembly(Code, References, "System", "Microsoft.VisualBasic.VBCodeProvider", pAppDomain, FileName, CompilerOptions)
+	return CLR_CompileAssembly(Code, References, "System", "Microsoft.CSharp.CSharpCodeProvider", AppDomain, FileName, CompilerOptions)
 }
 
-CLR_StartDomain(ByRef pAppDomain, BaseDirectory="")
+CLR_CompileVB(Code, References="", AppDomain=0, FileName="", CompilerOptions="")
 {
-    RtHst:=CLR_Start(), pAppDomain:=0
-    if (BaseDirectory!="")    ; AppDomainSetup.ApplicationBase = BaseDirectory;
-        DllCall(NumGet(NumGet(RtHst+0)+72),"uint",RtHst,"uint*",puSetup)
-        ,pSetup := COM_QueryInterface(puSetup, "{27FFF232-A7A8-40DD-8D4A-734AD59FCD41}")
-        ,DllCall(NumGet(NumGet(pSetup+0)+16),"uint",pSetup,"uint",CLR_BSTR(ws,BaseDirectory))
-        ,COM_Release(pSetup)
-    else
-        puSetup := 0
-    hr:=DllCall(NumGet(NumGet(RtHst+0)+68),"uint",RtHst ,"uint*",0,"uint",puSetup,"uint",0,"uint*",pAppDomain)
-    if puSetup
-        COM_Release(puSetup)
-    return hr
+	return CLR_CompileAssembly(Code, References, "System", "Microsoft.VisualBasic.VBCodeProvider", AppDomain, FileName, CompilerOptions)
 }
 
-CLR_StopDomain(pAppDomain)
+CLR_StartDomain(ByRef AppDomain, BaseDirectory="")
 {
-    RtHst:=CLR_Start()
-    return DllCall(NumGet(NumGet(RtHst+0)+80),"uint",RtHst,"uint",pAppDomain)
+	static null := ComObject(13,0)
+	args := ComObjArray(0xC, 5), args[0] := "", args[2] := BaseDirectory, args[4] := ComObject(0xB,false)
+	AppDomain := CLR_GetDefaultDomain().GetType().InvokeMember_3("CreateDomain", 0x158, null, null, args)
+	return A_LastError >= 0
+}
+
+CLR_StopDomain(ByRef AppDomain)
+{	; ICorRuntimeHost::UnloadDomain
+	DllCall("SetLastError", "uint", hr := DllCall(NumGet(NumGet(0+RtHst:=CLR_Start())+20*A_PtrSize), "ptr", RtHst, "ptr", ComObjValue(AppDomain))), AppDomain := ""
+	return hr >= 0
+}
+
+; NOTE: IT IS NOT NECESSARY TO CALL THIS FUNCTION unless you need to load a specific version.
+CLR_Start(Version="") ; returns ICorRuntimeHost*
+{
+	static RtHst := 0
+	; The simple method gives no control over versioning, and seems to load .NET v2 even when v4 is present:
+	; return RtHst ? RtHst : (RtHst:=COM_CreateObject("CLRMetaData.CorRuntimeHost","{CB2F6722-AB3A-11D2-9C40-00C04FA30A3E}"), DllCall(NumGet(NumGet(RtHst+0)+40),"uint",RtHst))
+	if RtHst
+		return RtHst
+	EnvGet SystemRoot, SystemRoot
+	if Version =
+		Loop % SystemRoot "\Microsoft.NET\Framework" (A_PtrSize=8?"64":"") "\*", 2
+			if (FileExist(A_LoopFileFullPath "\mscorlib.dll") && A_LoopFileName > Version)
+				Version := A_LoopFileName
+	if DllCall("mscoree\CorBindToRuntimeEx", "wstr", Version, "ptr", 0, "uint", 0
+	, "ptr", CLR_GUID(CLSID_CorRuntimeHost, "{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}")
+	, "ptr", CLR_GUID(IID_ICorRuntimeHost,  "{CB2F6722-AB3A-11D2-9C40-00C04FA30A3E}")
+	, "ptr*", RtHst) >= 0
+		DllCall(NumGet(NumGet(RtHst+0)+10*A_PtrSize), "ptr", RtHst) ; Start
+	return RtHst
 }
 
 ;
 ; INTERNAL FUNCTIONS
 ;
 
-CLR_Start(ver="") ; returns ICorRuntimeHost*
+CLR_GetDefaultDomain()
 {
-    static RtHst := 0
-    ; The simple method gives no control over versioning, and seems to load .NET v2 even when v4 is present:
-    ; return RtHst ? RtHst : (RtHst:=COM_CreateObject("CLRMetaData.CorRuntimeHost","{CB2F6722-AB3A-11D2-9C40-00C04FA30A3E}"), DllCall(NumGet(NumGet(RtHst+0)+40),"uint",RtHst))
-    if RtHst
-        return RtHst
-    EnvGet SystemRoot, SystemRoot
-    if ver=
-        Loop % SystemRoot "\Microsoft.NET\Framework" (A_PtrSize=8?"64":"") "\*", 2
-            if (FileExist(A_LoopFileFullPath "\mscorlib.dll") && A_LoopFileName > ver)
-                ver := A_LoopFileName
-    if DllCall("mscoree\CorBindToRuntimeEx", "wstr", ver, "ptr", 0, "uint", 0
-    , "ptr", COM_GUID4String(CLSID_CorRuntimeHost, "{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}")
-    , "ptr", COM_GUID4String(IID_ICorRuntimeHost,  "{CB2F6722-AB3A-11D2-9C40-00C04FA30A3E}")
-    , "ptr*", RtHst)=0
-        DllCall(NumGet(NumGet(RtHst+0)+40),"uint",RtHst)
-    return RtHst
+	static defaultDomain := 0
+	if !defaultDomain
+	{	; ICorRuntimeHost::GetDefaultDomain
+		if DllCall(NumGet(NumGet(0+RtHst:=CLR_Start())+13*A_PtrSize), "ptr", RtHst, "ptr*", p:=0) >= 0
+			defaultDomain := ComObject(p), ObjRelease(p)
+	}
+	return defaultDomain
 }
 
-CLR_GetDefaultDomain() ; returns IUnknown*
+CLR_CompileAssembly(Code, References, ProviderAssembly, ProviderType, AppDomain=0, FileName="", CompilerOptions="")
 {
-    static pApp := 0
-    if !pApp
-        RtHst:=CLR_Start(), DllCall(NumGet(NumGet(RtHst+0)+52),"uint",RtHst,"uint*",pApp)
-    return pApp
+	if !AppDomain
+		AppDomain := CLR_GetDefaultDomain()
+	
+	if !(asmProvider := CLR_LoadLibrary(ProviderAssembly, AppDomain))
+	|| !(codeProvider := asmProvider.CreateInstance(ProviderType))
+	|| !(codeCompiler := codeProvider.CreateCompiler())
+		return 0
+
+	if !(asmSystem := (ProviderAssembly="System") ? asmProvider : CLR_LoadLibrary("System", AppDomain))
+		return 0
+	
+	; Convert | delimited list of references into an array.
+	StringSplit, Refs, References, |, %A_Space%%A_Tab%
+	aRefs := ComObjArray(8, Refs0)
+	Loop % Refs0
+		aRefs[A_Index-1] := Refs%A_Index%
+	
+	; Set parameters for compiler.
+	prms := CLR_CreateObject(asmSystem, "System.CodeDom.Compiler.CompilerParameters", aRefs)
+	, prms.OutputAssembly          := FileName
+	, prms.GenerateInMemory        := FileName=""
+	, prms.GenerateExecutable      := SubStr(FileName,-3)=".exe"
+	, prms.CompilerOptions         := CompilerOptions
+	, prms.IncludeDebugInformation := true
+	
+	; Compile!
+	compilerRes := codeCompiler.CompileAssemblyFromSource(prms, Code)
+	
+	if error_count := (errors := compilerRes.Errors).Count
+	{
+		error_text := ""
+		Loop % error_count
+			error_text .= ((e := errors.Item[A_Index-1]).IsWarning ? "Warning " : "Error ") . e.ErrorNumber " on line " e.Line ": " e.ErrorText "`n`n"
+		MsgBox, 16, Compilation Failed, %error_text%
+		return 0
+	}
+	; Success. Return Assembly object or path.
+	return compilerRes[FileName="" ? "CompiledAssembly" : "PathToAssembly"]
 }
 
-CLR_CompileAssembly(Code, References, ProviderAssembly, ProviderType, pAppDomain=0, FileName="", CompilerOptions="")
+CLR_GUID(ByRef GUID, sGUID)
 {
-    if !(pApp := pAppDomain ? pAppDomain : CLR_GetDefaultDomain())
-        return 0
-    
-    if asmProvider := CLR_LoadLibrary(ProviderAssembly, pApp)
-        asmSystem := ProviderAssembly="System" ? asmProvider : CLR_LoadLibrary("System",pApp)
-    if (pAppDomain != pApp)
-        COM_Release(pApp) ; Clean up unmanaged reference.
-    if !asmProvider
-        return 0
-    
-    if !(codeProvider := asmProvider.CreateInstance(ProviderType))
-    || !(codeCompiler := codeProvider.CreateCompiler())
-        return 0
-
-    ; Create array of strings (references) -> SAFEARRAY.
-    StringSplit, Refs, References, |, %A_Space%%A_Tab%
-    VarSetCapacity(aRefs,24+4*Refs0,0), NumPut(Refs0,aRefs,16)
-    NumPut(&aRefs+24,NumPut(4,NumPut(1,aRefs,0,"Ushort")+2)+4)
-    Loop, %Refs0%
-        NumPut(CLR_BSTR(Refs%A_Index%,Refs%A_Index%), aRefs, 20+4*A_Index)
-    ; Create CompilerParameters object.
-    compilerParms := CLR_CreateObject(asmSystem
-        , "System.CodeDom.Compiler.CompilerParameters", COM_Parameter(0x2008, &aRefs))
-    
-    ; Set parameters for compiler.
-    if FileName !=
-        compilerParms.OutputAssembly := FileName
-    compilerParms.GenerateInMemory := FileName=""
-    if SubStr(FileName,-3)=".exe"
-        compilerParms.GenerateExecutable := true
-    if CompilerOptions
-        compilerParms.CompilerOptions := CompilerOptions
-    compilerParms.IncludeDebugInformation := true
-    
-    ; Compile!
-    compilerRes := codeCompiler.CompileAssemblyFromSource(compilerParms, Code)
-    
-    if error_count := (errors := compilerRes.Errors).Count
-    {
-        Loop % error_count
-        {
-            error := errors.Item[A_Index-1]
-            error_text .= (error.IsWarning ? "Warning " : "Error ")
-                . error.ErrorNumber " on line " error.Line
-                . ": " error.ErrorText "`n`n"
-        }
-        MsgBox, 16, Compilation Failed, %error_text%
-        return 0
-    }
-    ; Success.
-    return compilerRes[FileName="" ? "CompiledAssembly" : "PathToAssembly"]
-}
-
-CLR_BSTR(ByRef wString, sString)  ; In place of COM_SysString (COM_U) and COM_Unicode4Ansi (COM_L), more convenient than COM_SysAllocString/COM_SysFreeString.
-{
-    if A_IsUnicode {
-        VarSetCapacity(wString,4+nLen:=2*StrLen(sString))
-        Return DllCall("kernel32\lstrcpyW","Uint",NumPut(nLen,wString),"Uint",&sString)
-    } else {
-        VarSetCapacity(wString,3+2*nLen:=1+StrLen(sString))
-        Return NumPut(DllCall("kernel32\MultiByteToWideChar","Uint",0,"Uint",0,"Uint",&sString,"int",nLen,"Uint",&wString+4,"int",nLen,"Uint")*2-2,wString)
-    }
+	VarSetCapacity(GUID, 16, 0)
+	return DllCall("ole32\CLSIDFromString", "wstr", sGUID, "ptr", &GUID) >= 0 ? &GUID : ""
 }
