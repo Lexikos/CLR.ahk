@@ -4,9 +4,9 @@
 ; ==========================================================
 ;
 ;   Author:     Lexikos
-;   Version:    2.0
-;   Requires:	AutoHotkey v2.0-beta.1
+;   Version:    2.0.1
 ;
+#Requires AutoHotkey v2.0
 
 CLR_LoadLibrary(AssemblyName, AppDomain:=0)
 {
